@@ -19,7 +19,7 @@
 </form>
 
 <table class="table table-striped">
-  <thead><tr><th>Name</th><th>Qty</th><th>Cost</th><th>Price</th><th>Added</th><th>Updated</th><th>Value</th><th></th></tr></thead>
+  <thead><tr><th>Name</th><th>Qty</th><th>Cost</th><th>Price</th><th>Updated</th><th>Value</th><th></th></tr></thead>
   <tbody>
   {% for p in products %}
     <tr>
@@ -27,7 +27,6 @@
       <td>{{ p.quantity }}</td>
       <td>₦{{ p.cost_price|floatformat:2|intcomma }}</td>
       <td>₦{{ p.selling_price|floatformat:2|intcomma }}</td>
-      <td>{{ p.date_added|date:"M d, Y H:i" }}</td>
       <td>{{ p.updated_at|date:"M d, Y H:i" }}</td>
       <td>₦{{ p.stock_value|floatformat:2|intcomma }}</td>
       <td>
@@ -36,7 +35,7 @@
       </td>
     </tr>
   {% empty %}
-    <tr><td colspan="8">No products. <a href="{% url 'mini_mart:product_add' %}">Add one</a></td></tr>
+    <tr><td colspan="7">No products. <a href="{% url 'mini_mart:product_add' %}">Add one</a></td></tr>
   {% endfor %}
   </tbody>
 </table>

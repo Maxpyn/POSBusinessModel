@@ -61,9 +61,9 @@ function renderProducts() {
             <button type="button" class="btn btn-sm btn-outline-primary" data-product-id="${product.id}" data-unit="base">
                 N${Number(product.price).toFixed(2)} / ${escapeHtml(product.base_unit)}
             </button>
-            ${product.alternative_unit ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-product-id="${product.id}" data-unit="alternative">
-                N${Number(product.alternative_price).toFixed(2)} / ${escapeHtml(product.alternative_unit)}
-            </button>` : ''}
+            ${product.units.slice(1).map(unit => `<button type="button" class="btn btn-sm btn-outline-secondary" data-product-id="${product.id}" data-unit="${unit.code}">
+                N${Number(unit.price).toFixed(2)} / ${escapeHtml(unit.name)}
+            </button>`).join('')}
         </div>
     `).join('') || '<div class="text-muted p-3">No matching products in the saved catalog.</div>';
 }
@@ -119,9 +119,10 @@ productList.addEventListener('click', event => {
     const product = products.find(item => String(item.id) === button.dataset.productId);
     if (!product) return;
     const unit = button.dataset.unit || 'base';
-    const multiplier = unit === 'alternative' ? product.alternative_quantity : 1;
-    const unitName = unit === 'alternative' ? product.alternative_unit : product.base_unit;
-    const price = unit === 'alternative' ? product.alternative_price : product.price;
+    const selectedUnit = product.units.find(item => item.code === unit) || product.units[0];
+    const multiplier = selectedUnit.conversion_quantity;
+    const unitName = selectedUnit.name;
+    const price = selectedUnit.price;
     const cartKey = `${product.id}:${unit}`;
     const current = cart[cartKey] || {name: product.name, price, quantity: 0, unitName, productId: product.id, unit, cartKey};
     if ((current.quantity + 1) * multiplier > product.stock) {
@@ -162,7 +163,10 @@ document.getElementById('complete-sale').addEventListener('click', async () => {
     }
     for (const item of items) {
         const product = products.find(product => product.id === item.product_id);
-        if (product) product.stock -= item.quantity * (item.unit === 'alternative' ? product.alternative_quantity : 1);
+        if (product) {
+            const unit = product.units.find(unitOption => unitOption.code === item.unit) || product.units[0];
+            product.stock -= item.quantity * unit.conversion_quantity;
+        }
     }
     localStorage.setItem(productKey, JSON.stringify(products));
     cart = {};

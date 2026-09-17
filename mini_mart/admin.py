@@ -7,6 +7,7 @@ from .models import (
     Sale,
     SaleItem,
     ProductPriceHistory,
+    ProductUnit,
     Tenant,
     TenantMembership,
 )
@@ -18,6 +19,12 @@ class ProductPriceHistoryAdmin(admin.ModelAdmin):
     list_filter = ("changed_at",)
     search_fields = ("product__name",)
     readonly_fields = ("product", "cost_price", "selling_price", "alternative_selling_price", "changed_at")
+
+
+@admin.register(ProductUnit)
+class ProductUnitAdmin(admin.ModelAdmin):
+    list_display = ("product", "name", "conversion_quantity", "selling_price")
+    search_fields = ("product__name", "name")
 
 
 @admin.register(Tenant)

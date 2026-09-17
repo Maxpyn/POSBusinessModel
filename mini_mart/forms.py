@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import Customer, ExistingDebt, Product, Sale
+from .models import Customer, ExistingDebt, Product, ProductUnit, Sale
 
 
 class ProductForm(forms.ModelForm):
@@ -15,10 +15,6 @@ class ProductForm(forms.ModelForm):
             "base_unit",
             "cost_price",
             "selling_price",
-            "has_alternative_unit",
-            "alternative_unit",
-            "alternative_unit_quantity",
-            "alternative_selling_price",
         ]
 
         widgets = {
@@ -58,30 +54,6 @@ class ProductForm(forms.ModelForm):
                 attrs={
                     "class": "form-control",
                     "step": "0.01",
-                    "inputmode": "decimal",
-                }
-            ),
-            "has_alternative_unit": forms.CheckboxInput(
-                attrs={"class": "form-check-input"}
-            ),
-            "alternative_unit": forms.TextInput(
-                attrs={
-                    "class": "form-control",
-                    "placeholder": "e.g. Mudu, Crate, Dozen",
-                }
-            ),
-            "alternative_unit_quantity": forms.NumberInput(
-                attrs={
-                    "class": "form-control",
-                    "min": "1",
-                    "inputmode": "numeric",
-                }
-            ),
-            "alternative_selling_price": forms.NumberInput(
-                attrs={
-                    "class": "form-control",
-                    "step": "0.01",
-                    "min": "0",
                     "inputmode": "decimal",
                 }
             ),
@@ -240,4 +212,15 @@ class ExistingDebtForm(forms.ModelForm):
             "description": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "What is this debt for?"}
             ),
+        }
+
+
+class ProductUnitForm(forms.ModelForm):
+    class Meta:
+        model = ProductUnit
+        fields = ["name", "conversion_quantity", "selling_price"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Mudu, Bag, Crate"}),
+            "conversion_quantity": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+            "selling_price": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
         }

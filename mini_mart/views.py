@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.db import transaction
+from django.forms import inlineformset_factory
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from django.db.models import Sum, F, DecimalField, Q
@@ -9,8 +10,28 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from decimal import Decimal
 from django.conf import settings
-from .forms import ExistingDebtForm, ProductForm, CustomerForm # remove SaleForm, PaymentForm if you don't use them
-from .models import ExistingDebt, Product, Sale, SaleItem, Customer
+from .forms import ExistingDebtForm, ProductForm, ProductUnitForm, CustomerForm # remove SaleForm, PaymentForm if you don't use them
+from .models import ExistingDebt, Product, ProductUnit, Sale, SaleItem, Customer
+
+ProductUnitFormSet = inlineformset_factory(
+    Product,
+    ProductUnit,
+    form=ProductUnitForm,
+    extra=3,
+    can_delete=True,
+)
+
+
+def product_unit_data(product):
+    return [
+        {
+            "code": unit.code if hasattr(unit, "code") else str(unit.pk),
+            "name": unit.name,
+            "conversion_quantity": unit.conversion_quantity,
+            "price": str(unit.selling_price),
+        }
+        for unit in product.sale_units
+    ]
 
 def dashboard(request):
     today = timezone.now().date()
@@ -127,6 +148,7 @@ def new_sale(request):
                 'alternative_unit': p.alternative_unit if p.has_alternative_unit else None,
                 'alternative_price': float(p.alternative_selling_price) if p.has_alternative_unit else None,
                 'alternative_quantity': p.alternative_unit_quantity if p.has_alternative_unit else None,
+                'units': product_unit_data(p),
             }
             for p in products
         ]
@@ -165,26 +187,25 @@ def new_sale(request):
                         is_available=True,
                     )
                 }
-                if len(products_by_id) != len(quantities):
+                if len(products_by_id) != len({product_id for product_id, _ in quantities}):
                     raise ValueError('One or more products are no longer available.')
 
                 for (product_id, unit), units_sold in quantities.items():
                     product = products_by_id[product_id]
-                    if unit == 'alternative':
-                        if not product.has_alternative_unit:
-                            raise ValueError(f'{product.name} has no alternative selling unit.')
-                        stock_quantity = units_sold * product.alternative_unit_quantity
-                        sale_price = product.alternative_selling_price
-                        sale_unit = product.alternative_unit
-                    else:
-                        stock_quantity = units_sold
-                        sale_price = product.selling_price
-                        sale_unit = product.base_unit
+                    selected_unit = next(
+                        (sale_unit for sale_unit in product.sale_units if sale_unit.code == unit),
+                        None,
+                    )
+                    if selected_unit is None:
+                        raise ValueError(f'{product.name} has no selling unit named {unit}.')
+                    stock_quantity = units_sold * selected_unit.conversion_quantity
+                    sale_price = selected_unit.selling_price
+                    sale_unit = selected_unit.name
                     if stock_quantity > product.quantity:
                         raise ValueError(f'Not enough stock for {product.name}.')
                     total_amount += sale_price * units_sold
                     cost_amount += product.cost_price * stock_quantity
-                    base_price = sale_price / product.alternative_unit_quantity if unit == 'alternative' else sale_price
+                    base_price = sale_price / selected_unit.conversion_quantity
                     items_data.append((product, stock_quantity, units_sold, base_price, sale_unit))
 
                 sale = Sale.objects.create(
@@ -242,6 +263,7 @@ def offline_pos(request):
             'alternative_unit': product.alternative_unit if product.has_alternative_unit else None,
             'alternative_price': str(product.alternative_selling_price) if product.has_alternative_unit else None,
             'alternative_quantity': product.alternative_unit_quantity if product.has_alternative_unit else None,
+            'units': product_unit_data(product),
         }
         for product in products
     ]
@@ -281,23 +303,21 @@ def sync_offline_sale(request):
                     is_available=True,
                 )
             }
-            if len(products) != len(quantities):
+            if len(products) != len({product_id for product_id, _ in quantities}):
                 raise ValueError('A product is no longer available.')
 
             for (product_id, unit), units_sold in quantities.items():
                 product = products[product_id]
-                if unit == 'alternative':
-                    if not product.has_alternative_unit:
-                        raise ValueError(f'{product.name} has no alternative selling unit.')
-                    stock_quantity = units_sold * product.alternative_unit_quantity
-                    sale_price = product.alternative_selling_price
-                    sale_unit = product.alternative_unit
-                    base_price = sale_price / product.alternative_unit_quantity
-                else:
-                    stock_quantity = units_sold
-                    sale_price = product.selling_price
-                    sale_unit = product.base_unit
-                    base_price = sale_price
+                selected_unit = next(
+                    (sale_unit for sale_unit in product.sale_units if sale_unit.code == unit),
+                    None,
+                )
+                if selected_unit is None:
+                    raise ValueError(f'{product.name} has no selling unit named {unit}.')
+                stock_quantity = units_sold * selected_unit.conversion_quantity
+                sale_price = selected_unit.selling_price
+                sale_unit = selected_unit.name
+                base_price = sale_price / selected_unit.conversion_quantity
                 if stock_quantity > product.quantity:
                     raise ValueError(f'Not enough stock for {product.name}.')
                 total_amount += sale_price * units_sold
@@ -482,24 +502,35 @@ def product_add(request):
     if request.method == 'POST':
         form = ProductForm(request.POST)
         if form.is_valid():
-            form.save()
-            messages.success(request, 'Product added successfully.')
-            return redirect('mini_mart:product_list')
+            product = form.save()
+            units_formset = ProductUnitFormSet(request.POST, instance=product)
+            if not units_formset.is_valid():
+                product.delete()
+            else:
+                units_formset.save()
+                messages.success(request, 'Product added successfully.')
+                return redirect('mini_mart:product_list')
+        else:
+            units_formset = ProductUnitFormSet(request.POST)
     else:
         form = ProductForm()
-    return render(request, 'product_form.html', {'form': form, 'action': 'Add'})
+        units_formset = ProductUnitFormSet()
+    return render(request, 'product_form.html', {'form': form, 'units_formset': units_formset, 'action': 'Add'})
 
 def product_edit(request, pk):
     product = get_object_or_404(Product, pk=pk)
     if request.method == 'POST':
         form = ProductForm(request.POST, instance=product)
-        if form.is_valid():
+        units_formset = ProductUnitFormSet(request.POST, instance=product)
+        if form.is_valid() and units_formset.is_valid():
             form.save()
-            messages.success(request, 'Product updated.')
+            units_formset.save()
+            messages.success(request, 'Product added successfully.')
             return redirect('mini_mart:product_list')
     else:
         form = ProductForm(instance=product)
-    return render(request, 'product_form.html', {'form': form, 'action': 'Edit', 'product': product})
+        units_formset = ProductUnitFormSet(instance=product)
+    return render(request, 'product_form.html', {'form': form, 'units_formset': units_formset, 'action': 'Edit', 'product': product})
 
 def product_delete(request, pk):
     product = get_object_or_404(Product, pk=pk)

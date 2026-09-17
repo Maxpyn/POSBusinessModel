@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.test import override_settings
 
-from .models import Customer, ExistingDebt, Product, ProductPriceHistory, Sale, SaleItem, Tenant, TenantMembership
+from .models import Customer, ExistingDebt, Product, ProductPriceHistory, ProductUnit, Sale, SaleItem, Tenant, TenantMembership
 
 
 class PosWorkflowTests(TestCase):
@@ -50,6 +50,27 @@ class PosWorkflowTests(TestCase):
 		self.assertEqual(item.units_sold, 2)
 		self.assertEqual(item.sale_unit, "Mudu")
 		self.assertEqual(item.quantity, 36)
+		self.assertEqual(Product.objects.get(pk=self.product.pk).quantity, 0)
+
+	def test_configured_sale_unit_can_be_selected_at_checkout(self):
+		bag = ProductUnit.objects.create(
+			product=self.product,
+			name="Bag",
+			conversion_quantity=5,
+			selling_price=Decimal("700.00"),
+		)
+
+		response = self.client.post(
+			reverse("mini_mart:new_sale"),
+			{"cart": [f"{self.product.pk}:2:{bag.pk}"]},
+		)
+
+		sale = Sale.objects.get()
+		item = sale.items.get()
+		self.assertRedirects(response, reverse("mini_mart:record_payment", args=[sale.pk]))
+		self.assertEqual(sale.total_amount, Decimal("1400.00"))
+		self.assertEqual(item.sale_unit, "Bag")
+		self.assertEqual(item.quantity, 10)
 		self.assertEqual(Product.objects.get(pk=self.product.pk).quantity, 0)
 
 	def test_product_price_changes_create_a_history_snapshot(self):
@@ -115,10 +136,9 @@ class PosWorkflowTests(TestCase):
 		form_response = self.client.get(reverse("mini_mart:product_add"))
 
 		self.assertContains(form_response, 'name="base_unit"')
-		self.assertContains(form_response, 'name="has_alternative_unit"')
-		self.assertContains(form_response, 'name="alternative_unit"')
-		self.assertContains(form_response, 'name="alternative_unit_quantity"')
-		self.assertContains(form_response, 'name="alternative_selling_price"')
+		self.assertContains(form_response, 'name="sale_units_config-0-name"')
+		self.assertContains(form_response, 'name="sale_units_config-0-conversion_quantity"')
+		self.assertContains(form_response, 'name="sale_units_config-0-selling_price"')
 
 		response = self.client.post(
 			reverse("mini_mart:product_add"),
@@ -129,19 +149,26 @@ class PosWorkflowTests(TestCase):
 				"base_unit": "Cup",
 				"cost_price": "84.00",
 				"selling_price": "100.00",
-				"has_alternative_unit": "on",
-				"alternative_unit": "Mudu",
-				"alternative_unit_quantity": 18,
-				"alternative_selling_price": "1800.00",
+				"sale_units_config-TOTAL_FORMS": "3",
+				"sale_units_config-INITIAL_FORMS": "0",
+				"sale_units_config-MIN_NUM_FORMS": "0",
+				"sale_units_config-MAX_NUM_FORMS": "1000",
+				"sale_units_config-0-name": "Mudu",
+				"sale_units_config-0-conversion_quantity": 18,
+				"sale_units_config-0-selling_price": "1800.00",
+				"sale_units_config-1-name": "Bag",
+				"sale_units_config-1-conversion_quantity": 540,
+				"sale_units_config-1-selling_price": "200000.00",
 			},
 		)
 
 		self.assertRedirects(response, reverse("mini_mart:product_list"))
 		product = Product.objects.get(name="Rice Cup")
+		units = ProductUnit.objects.filter(product=product).order_by("name")
 		self.assertEqual(product.base_unit, "Cup")
-		self.assertEqual(product.alternative_unit, "Mudu")
-		self.assertEqual(product.alternative_unit_quantity, 18)
-		self.assertEqual(product.alternative_selling_price, Decimal("1800.00"))
+		self.assertEqual(units.count(), 2)
+		self.assertEqual(units.get(name="Mudu").conversion_quantity, 18)
+		self.assertEqual(units.get(name="Bag").selling_price, Decimal("200000.00"))
 
 	def test_checkout_consolidates_cart_and_reduces_stock(self):
 		response = self.client.post(

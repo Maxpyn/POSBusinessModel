@@ -169,6 +169,61 @@ class Product(models.Model):
                 alternative_selling_price=self.alternative_selling_price,
             )
 
+    @property
+    def sale_units(self):
+        units = [
+            ProductUnitData(
+                name=self.base_unit,
+                conversion_quantity=1,
+                selling_price=self.selling_price,
+                code="base",
+            )
+        ]
+        configured_units = list(self.sale_units_config.all())
+        if configured_units:
+            return units + configured_units
+        return units + ([
+            ProductUnitData(
+                name=self.alternative_unit,
+                conversion_quantity=self.alternative_unit_quantity,
+                selling_price=self.alternative_selling_price,
+                code="alternative",
+            )
+        ] if self.has_alternative_unit else [])
+
+
+class ProductUnitData:
+    def __init__(self, name, conversion_quantity, selling_price, code):
+        self.name = name
+        self.conversion_quantity = conversion_quantity
+        self.selling_price = selling_price
+        self.code = code
+
+
+class ProductUnit(models.Model):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="sale_units_config",
+    )
+    name = models.CharField(max_length=50)
+    conversion_quantity = models.PositiveIntegerField(
+        help_text="Number of base units consumed when one of these is sold."
+    )
+    selling_price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("product", "name"), name="unique_product_sale_unit"),
+        ]
+
+    @property
+    def code(self):
+        return str(self.pk)
+
+    def __str__(self):
+        return f"{self.product.name} - {self.name}"
+
 
 class ProductPriceHistory(models.Model):
     product = models.ForeignKey(

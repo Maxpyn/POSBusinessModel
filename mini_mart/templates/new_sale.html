@@ -22,22 +22,17 @@
                     ₦{{ p.alternative_selling_price }} / {{ p.alternative_unit }}
                 </button>
                 {% endif %}
+            <div class="list-group-item">
+                <strong>{{ p.name }}</strong>
+                <small class="text-muted d-block">Stock: {{ p.quantity }}</small>
+                {% for unit in p.sale_units %}
+                <button type="button" class="btn btn-sm {% if forloop.first %}btn-outline-primary{% else %}btn-outline-secondary{% endif %} add-to-cart"
+                    data-id="{{ p.id }}" data-name="{{ p.name }}" data-price="{{ unit.selling_price }}"
+                    data-unit="{{ unit.name }}" data-payload-unit="{{ unit.code }}">
+                    ₦{{ unit.selling_price }} / {{ unit.name }}
+                </button>
+                {% endfor %}
             </div>
-
-                <ul
-                    id="cart-list"
-                    class="list-group list-group-flush"
-                ></ul>
-
-                <div class="card-body">
-
-                    <div class="page-kicker">Amount due</div>
-                    <h3 class="fw-bold mb-3">
-                        ₦<span id="cart-total">0.00</span>
-                    </h3>
-
-                    <!-- Hidden cart inputs -->
-                    <div id="cart-inputs"></div>
 
                     <button
                         type="submit"
@@ -133,11 +128,11 @@ searchBox.addEventListener('keyup', () => {
                         data-unit="${p.base_unit}" data-payload-unit="base">
                         ₦${p.price} / ${p.base_unit}
                     </button>
-                    ${p.alternative_unit ? `<button type="button" class="btn btn-sm btn-outline-secondary add-to-cart"
-                        data-id="${p.id}" data-name="${p.name}" data-price="${p.alternative_price}"
-                        data-unit="${p.alternative_unit}" data-payload-unit="alternative">
-                        ₦${p.alternative_price} / ${p.alternative_unit}
-                    </button>` : ''}
+                    ${p.units.slice(1).map(unit => `<button type="button" class="btn btn-sm btn-outline-secondary add-to-cart"
+                        data-id="${p.id}" data-name="${p.name}" data-price="${unit.price}"
+                        data-unit="${unit.name}" data-payload-unit="${unit.code}">
+                        ₦${unit.price} / ${unit.name}
+                    </button>`).join('')}
                 </div>
             `;
 
