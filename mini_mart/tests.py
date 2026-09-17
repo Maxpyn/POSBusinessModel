@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.test import override_settings
 
-from .models import Customer, ExistingDebt, Product, ProductPriceHistory, ProductUnit, Sale, SaleItem, Tenant, TenantMembership
+from .models import Customer, ExistingDebt, Product, ProductPriceHistory, ProductUnit, Sale, SaleItem, SuspendedOrder, Tenant, TenantMembership
 
 
 class PosWorkflowTests(TestCase):
@@ -73,6 +73,38 @@ class PosWorkflowTests(TestCase):
 		self.assertEqual(item.quantity, 10)
 		self.assertEqual(Product.objects.get(pk=self.product.pk).quantity, 0)
 
+	def test_order_can_be_held_and_resumed_in_same_browser(self):
+		hold_response = self.client.post(
+			reverse("mini_mart:hold_order"),
+			{"cart": [f"{self.product.pk}:2:base"], "label": "Customer A"},
+		)
+
+		self.assertEqual(hold_response.status_code, 200)
+		order = SuspendedOrder.objects.get()
+		self.assertEqual(order.label, "Customer A")
+		self.assertEqual(order.total_amount, Decimal("300.00"))
+
+		resume_response = self.client.get(reverse("mini_mart:resume_order", args=[order.pk]))
+		self.assertEqual(resume_response.status_code, 200)
+		self.assertEqual(resume_response.json()["items"][0]["qty"], 2)
+
+		self.client.post(
+			reverse("mini_mart:new_sale"),
+			{"cart": [f"{self.product.pk}:2:base"], "suspended_order_id": order.pk},
+		)
+		self.assertFalse(SuspendedOrder.objects.filter(pk=order.pk).exists())
+
+	def test_held_order_is_private_to_its_browser_session(self):
+		self.client.post(
+			reverse("mini_mart:hold_order"),
+			{"cart": [f"{self.product.pk}:1:base"]},
+		)
+		order = SuspendedOrder.objects.get()
+
+		other_client = self.client_class()
+		response = other_client.get(reverse("mini_mart:resume_order", args=[order.pk]))
+		self.assertEqual(response.status_code, 404)
+
 	def test_product_price_changes_create_a_history_snapshot(self):
 		self.assertEqual(ProductPriceHistory.objects.filter(product=self.product).count(), 1)
 		self.product.selling_price = Decimal("175.00")
@@ -125,7 +157,28 @@ class PosWorkflowTests(TestCase):
 			{"financial_kpi_pin": "4826"},
 		)
 		self.assertRedirects(response, reverse("mini_mart:dashboard"))
+		self.tenant.refresh_from_db()
+		self.assertTrue(self.tenant.check_financial_kpi_pin("4826"))
 		self.assertContains(self.client.get(reverse("mini_mart:dashboard")), "Potential revenue")
+
+	@override_settings(FINANCIAL_KPI_PIN="4826")
+	def test_tenant_kpi_pin_is_not_reused_as_plaintext_global_access(self):
+		self.client.logout()
+		self.client.post(
+			reverse("mini_mart:dashboard"),
+			{"financial_kpi_pin": "4826"},
+		)
+		self.tenant.refresh_from_db()
+		self.assertNotEqual(self.tenant.financial_kpi_pin_hash, "4826")
+		self.assertFalse(self.tenant.check_financial_kpi_pin("wrong-pin"))
+
+	@override_settings(FINANCIAL_KPI_PIN="4826")
+	def test_owner_can_hide_financial_kpis_again(self):
+		self.client.logout()
+		self.client.post(reverse("mini_mart:dashboard"), {"financial_kpi_pin": "4826"})
+		self.assertContains(self.client.get(reverse("mini_mart:dashboard")), "Potential revenue")
+		self.client.post(reverse("mini_mart:dashboard"), {"lock_financial_kpis": "1"})
+		self.assertNotContains(self.client.get(reverse("mini_mart:dashboard")), "Potential revenue")
 
 	def test_pos_dashboard_does_not_require_login(self):
 		self.client.logout()

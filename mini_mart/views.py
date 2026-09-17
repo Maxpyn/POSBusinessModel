@@ -9,9 +9,10 @@ from django.db.models import Sum, F, DecimalField, Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from decimal import Decimal
+from uuid import uuid4
 from django.conf import settings
 from .forms import ExistingDebtForm, ProductForm, ProductUnitForm, CustomerForm # remove SaleForm, PaymentForm if you don't use them
-from .models import ExistingDebt, Product, ProductUnit, Sale, SaleItem, Customer
+from .models import ExistingDebt, Product, ProductUnit, Sale, SaleItem, Customer, SuspendedOrder, SuspendedOrderItem
 
 ProductUnitFormSet = inlineformset_factory(
     Product,
@@ -33,17 +34,103 @@ def product_unit_data(product):
         for unit in product.sale_units
     ]
 
+
+def browser_key(request):
+    key = request.session.get("pos_browser_key")
+    if not key:
+        key = uuid4().hex
+        request.session["pos_browser_key"] = key
+    return key
+
+
+def parse_cart_items(cart):
+    quantities = {}
+    for item in cart:
+        parts = item.split(":")
+        product_id, quantity = parts[:2]
+        unit_code = parts[2] if len(parts) > 2 else "base"
+        quantity = int(quantity)
+        if quantity > 0:
+            key = (product_id, unit_code)
+            quantities[key] = quantities.get(key, 0) + quantity
+
+    if not quantities:
+        raise ValueError("Cart is empty.")
+
+    products = {
+        str(product.id): product
+        for product in Product.objects.select_for_update().filter(
+            id__in=[product_id for product_id, _ in quantities],
+            is_available=True,
+        )
+    }
+    if len(products) != len({product_id for product_id, _ in quantities}):
+        raise ValueError("One or more products are no longer available.")
+
+    total_amount = Decimal("0.00")
+    cost_amount = Decimal("0.00")
+    items = []
+    for (product_id, unit_code), units_sold in quantities.items():
+        product = products[product_id]
+        selected_unit = next(
+            (unit for unit in product.sale_units if unit.code == unit_code),
+            None,
+        )
+        if selected_unit is None:
+            raise ValueError(f"{product.name} has no selling unit named {unit_code}.")
+        stock_quantity = units_sold * selected_unit.conversion_quantity
+        if stock_quantity > product.quantity:
+            raise ValueError(f"Not enough stock for {product.name}.")
+        total_amount += selected_unit.selling_price * units_sold
+        cost_amount += product.cost_price * stock_quantity
+        items.append({
+            "product": product,
+            "stock_quantity": stock_quantity,
+            "units_sold": units_sold,
+            "unit_code": unit_code,
+            "sale_unit": selected_unit.name,
+            "unit_price": selected_unit.selling_price / selected_unit.conversion_quantity,
+        })
+    return items, total_amount, cost_amount
+
+
+def suspended_order_data(order):
+    return {
+        "id": order.id,
+        "label": order.label,
+        "total": str(order.total_amount),
+        "items": [
+            {
+                "product_id": item.product_id,
+                "name": item.product.name,
+                "qty": item.units_sold,
+                "price": str(item.unit_price * item.stock_quantity / item.units_sold),
+                "unit": item.sale_unit,
+                "unit_code": item.unit_code,
+            }
+            for item in order.items.select_related("product").all()
+        ],
+    }
+
 def dashboard(request):
     today = timezone.now().date()
+    if request.method == 'POST' and request.POST.get('lock_financial_kpis'):
+        request.session.pop('financial_kpis_unlocked_tenant_id', None)
+        return redirect('mini_mart:dashboard')
     if request.method == 'POST' and request.POST.get('financial_kpi_pin'):
-        if settings.FINANCIAL_KPI_PIN and request.POST['financial_kpi_pin'] == settings.FINANCIAL_KPI_PIN:
-            request.session['financial_kpis_unlocked'] = True
+        submitted_pin = request.POST['financial_kpi_pin']
+        tenant = request.tenant
+        if tenant.check_financial_kpi_pin(submitted_pin):
+            request.session['financial_kpis_unlocked_tenant_id'] = tenant.pk
+        elif not tenant.financial_kpi_pin_hash and settings.FINANCIAL_KPI_PIN and submitted_pin == settings.FINANCIAL_KPI_PIN:
+            tenant.set_financial_kpi_pin(submitted_pin)
+            request.session['financial_kpis_unlocked_tenant_id'] = tenant.pk
         else:
             messages.error(request, 'The financial KPI PIN is invalid.')
         return redirect('mini_mart:dashboard')
 
     can_view_financials = bool(
-        request.session.get('financial_kpis_unlocked')
+        request.session.get('financial_kpis_unlocked_tenant_id') == request.tenant.pk
         or (
             request.tenant_membership
             and request.tenant_membership.can_view_financial_kpis
@@ -123,7 +210,7 @@ def dashboard(request):
 
 
 def new_sale(request):
-    """POS: AJAX search + session cart checkout"""
+    """POS with one active cart and multiple database-backed held orders."""
 
     query = request.GET.get('q')
 
@@ -163,50 +250,7 @@ def new_sale(request):
 
         try:
             with transaction.atomic():
-                total_amount = Decimal('0.00')
-                cost_amount = Decimal('0.00')
-                items_data = []
-                quantities = {}
-
-                for item in cart:
-                    parts = item.split(':')
-                    product_id, qty = parts[:2]
-                    unit = parts[2] if len(parts) > 2 else 'base'
-                    qty = int(qty)
-                    if qty > 0:
-                        key = (product_id, unit)
-                        quantities[key] = quantities.get(key, 0) + qty
-
-                if not quantities:
-                    raise ValueError('Cart is empty.')
-
-                products_by_id = {
-                    str(product.id): product
-                    for product in Product.objects.select_for_update().filter(
-                        id__in=[product_id for product_id, _ in quantities],
-                        is_available=True,
-                    )
-                }
-                if len(products_by_id) != len({product_id for product_id, _ in quantities}):
-                    raise ValueError('One or more products are no longer available.')
-
-                for (product_id, unit), units_sold in quantities.items():
-                    product = products_by_id[product_id]
-                    selected_unit = next(
-                        (sale_unit for sale_unit in product.sale_units if sale_unit.code == unit),
-                        None,
-                    )
-                    if selected_unit is None:
-                        raise ValueError(f'{product.name} has no selling unit named {unit}.')
-                    stock_quantity = units_sold * selected_unit.conversion_quantity
-                    sale_price = selected_unit.selling_price
-                    sale_unit = selected_unit.name
-                    if stock_quantity > product.quantity:
-                        raise ValueError(f'Not enough stock for {product.name}.')
-                    total_amount += sale_price * units_sold
-                    cost_amount += product.cost_price * stock_quantity
-                    base_price = sale_price / selected_unit.conversion_quantity
-                    items_data.append((product, stock_quantity, units_sold, base_price, sale_unit))
+                items_data, total_amount, cost_amount = parse_cart_items(cart)
 
                 sale = Sale.objects.create(
                     customer=None,
@@ -215,17 +259,25 @@ def new_sale(request):
                     amount_paid=Decimal('0.00')
                 )
 
-                for product, stock_quantity, units_sold, base_price, sale_unit in items_data:
+                for item in items_data:
+                    product = item["product"]
                     SaleItem.objects.create(
                         sale=sale,
                         product=product,
-                        quantity=stock_quantity,
-                        units_sold=units_sold,
-                        sale_unit=sale_unit,
-                        unit_price=base_price,
+                        quantity=item["stock_quantity"],
+                        units_sold=item["units_sold"],
+                        sale_unit=item["sale_unit"],
+                        unit_price=item["unit_price"],
                     )
-                    product.quantity -= stock_quantity
+                    product.quantity -= item["stock_quantity"]
                     product.save(update_fields=['quantity'])
+
+                suspended_id = request.POST.get("suspended_order_id")
+                if suspended_id:
+                    SuspendedOrder.objects.filter(
+                        pk=suspended_id,
+                        browser_key=browser_key(request),
+                    ).delete()
         except (TypeError, ValueError):
             messages.error(request, 'The cart contains invalid or unavailable items.')
             return redirect('mini_mart:new_sale')
@@ -241,11 +293,65 @@ def new_sale(request):
             pk=sale.id
         )
 
-    return render(
-        request,
-        'new_sale.html',
-        {'products': products}
+    held_orders = SuspendedOrder.objects.filter(
+        browser_key=browser_key(request),
+        status=SuspendedOrder.Status.HELD,
+    ).prefetch_related("items__product")
+    return render(request, 'new_sale.html', {
+        'products': products,
+        'held_orders': held_orders,
+    })
+
+
+@require_POST
+def hold_order(request):
+    cart = request.POST.getlist("cart")
+    label = request.POST.get("label", "").strip()
+    try:
+        with transaction.atomic():
+            items, total_amount, _ = parse_cart_items(cart)
+            order = SuspendedOrder.objects.create(
+                browser_key=browser_key(request),
+                label=label,
+                total_amount=total_amount,
+            )
+            SuspendedOrderItem.objects.bulk_create([
+                SuspendedOrderItem(
+                    order=order,
+                    product=item["product"],
+                    units_sold=item["units_sold"],
+                    stock_quantity=item["stock_quantity"],
+                    sale_unit=item["sale_unit"],
+                    unit_code=item["unit_code"],
+                    unit_price=item["unit_price"],
+                )
+                for item in items
+            ])
+        return JsonResponse({"status": "held", "order": suspended_order_data(order)})
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The cart contains invalid or unavailable items."}, status=400)
+
+
+def resume_order(request, pk):
+    order = get_object_or_404(
+        SuspendedOrder.objects.prefetch_related("items__product"),
+        pk=pk,
+        browser_key=browser_key(request),
+        status=SuspendedOrder.Status.HELD,
     )
+    return JsonResponse(suspended_order_data(order))
+
+
+@require_POST
+def discard_order(request, pk):
+    deleted, _ = SuspendedOrder.objects.filter(
+        pk=pk,
+        browser_key=browser_key(request),
+        status=SuspendedOrder.Status.HELD,
+    ).delete()
+    if not deleted:
+        return JsonResponse({"error": "Held order not found."}, status=404)
+    return JsonResponse({"status": "discarded"})
 
 
 def offline_pos(request):

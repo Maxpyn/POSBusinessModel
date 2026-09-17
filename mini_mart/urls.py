@@ -20,6 +20,9 @@ urlpatterns = [
 
     # Sales
     path("sell/", views.new_sale, name="new_sale"),
+    path("sell/hold/", views.hold_order, name="hold_order"),
+    path("sell/held/<int:pk>/", views.resume_order, name="resume_order"),
+    path("sell/held/<int:pk>/discard/", views.discard_order, name="discard_order"),
     path("offline-sell/", views.offline_pos, name="offline_pos"),
     path("offline-sell/sync/", views.sync_offline_sale, name="sync_offline_sale"),
     path("sales/", views.sales_history, name="sales_history"),

@@ -13,6 +13,11 @@
         <input type="password" name="financial_kpi_pin" class="form-control" placeholder="Owner KPI PIN" autocomplete="off">
         <button class="btn btn-outline-primary" type="submit">View KPIs</button>
     </form>
+    {% else %}
+    <form method="post" class="mt-3">
+        {% csrf_token %}
+        <button class="btn btn-sm btn-outline-secondary" type="submit" name="lock_financial_kpis" value="1">Hide financial KPIs</button>
+    </form>
     {% endif %}
 </div>
 

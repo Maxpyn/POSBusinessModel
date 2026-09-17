@@ -9,8 +9,32 @@
 
 <div class="row g-4">
     <div class="col-12">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="bi bi-pause-circle me-2"></i>Active orders</strong>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="new-order">+ New order</button>
+            </div>
+            <div class="list-group list-group-flush" id="held-orders">
+                {% for order in held_orders %}
+                <div class="list-group-item d-flex justify-content-between align-items-center" data-order-row="{{ order.pk }}">
+                    <span>
+                        <strong>Order #{{ order.pk }}</strong>
+                        {% if order.label %}<span class="text-muted">{{ order.label }}</span>{% endif %}
+                        <small class="text-muted d-block">₦{{ order.total_amount|floatformat:2 }} · HOLD</small>
+                    </span>
+                    <span class="d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary resume-order" data-order-id="{{ order.pk }}">Resume</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger discard-order" data-order-id="{{ order.pk }}">Discard</button>
+                    </span>
+                </div>
+                {% empty %}
+                <div class="list-group-item text-muted" id="no-held-orders">No held orders.</div>
+                {% endfor %}
+            </div>
+        </div>
         <form method="post">
             {% csrf_token %}
+            <input type="hidden" name="suspended_order_id" id="suspended-order-id">
             <div class="card cart-panel">
                 <div class="card-header"><strong><i class="bi bi-basket3 me-2"></i>Current basket</strong></div>
                 <ul id="cart-list" class="list-group list-group-flush"></ul>
@@ -18,6 +42,8 @@
                     <div class="page-kicker">Amount due</div>
                     <h3 class="fw-bold mb-3">₦<span id="cart-total">0.00</span></h3>
                     <div id="cart-inputs"></div>
+                    <input type="text" id="hold-label" class="form-control mb-2" placeholder="Customer name or order label (optional)">
+                    <button type="button" id="hold-order" class="btn btn-outline-warning w-100 mt-2"><i class="bi bi-pause-circle me-1"></i> Hold order</button>
                     <button type="submit" class="btn btn-success w-100 mt-2"><i class="bi bi-arrow-right-circle me-1"></i> Continue to payment</button>
                 </div>
             </div>
@@ -70,8 +96,18 @@ const resultsDiv = document.getElementById('product-results');
 const cartList = document.getElementById('cart-list');
 const cartTotalSpan = document.getElementById('cart-total');
 const cartInputs = document.getElementById('cart-inputs');
+const suspendedOrderId = document.getElementById('suspended-order-id');
+const holdLabel = document.getElementById('hold-label');
 
 let cart = {};
+
+function cartPayload() {
+    return Object.entries(cart).map(([key, item]) => `${key.split(':')[0]}:${item.qty}:${item.payloadUnit}`);
+}
+
+function csrfToken() {
+    return document.querySelector('[name=csrfmiddlewaretoken]').value;
+}
 
 // Product search
 searchBox.addEventListener('keyup', () => {
@@ -203,6 +239,59 @@ document.addEventListener('click', function(e) {
     if (!removeButton) return;
     delete cart[removeButton.dataset.cartKey];
     renderCart();
+});
+
+document.getElementById('hold-order').addEventListener('click', async () => {
+    if (!Object.keys(cart).length) return;
+    const response = await fetch('{% url "mini_mart:hold_order" %}', {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: (() => {
+            const body = new URLSearchParams({label: holdLabel.value});
+            cartPayload().forEach(line => body.append('cart', line));
+            return body;
+        })()
+    });
+    if (response.ok) window.location.reload();
+});
+
+document.getElementById('new-order').addEventListener('click', () => {
+    cart = {};
+    suspendedOrderId.value = '';
+    holdLabel.value = '';
+    renderCart();
+});
+
+document.addEventListener('click', async event => {
+    const resumeButton = event.target.closest('.resume-order');
+    if (resumeButton) {
+        const response = await fetch(`/sell/held/${resumeButton.dataset.orderId}/`);
+        if (!response.ok) return;
+        const order = await response.json();
+        cart = {};
+        order.items.forEach(item => {
+            const key = `${item.product_id}:${item.unit_code}`;
+            cart[key] = {
+                name: item.name,
+                price: Number(item.price),
+                qty: item.qty,
+                unit: item.unit,
+                payloadUnit: item.unit_code,
+            };
+        });
+        suspendedOrderId.value = order.id;
+        holdLabel.value = order.label || '';
+        renderCart();
+    }
+
+    const discardButton = event.target.closest('.discard-order');
+    if (discardButton) {
+        const response = await fetch(`/sell/held/${discardButton.dataset.orderId}/discard/`, {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrfToken()},
+        });
+        if (response.ok) document.querySelector(`[data-order-row="${discardButton.dataset.orderId}"]`).remove();
+    }
 });
 </script>
 

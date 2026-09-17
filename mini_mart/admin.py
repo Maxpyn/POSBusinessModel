@@ -8,6 +8,8 @@ from .models import (
     SaleItem,
     ProductPriceHistory,
     ProductUnit,
+    SuspendedOrder,
+    SuspendedOrderItem,
     Tenant,
     TenantMembership,
 )
@@ -27,11 +29,30 @@ class ProductUnitAdmin(admin.ModelAdmin):
     search_fields = ("product__name", "name")
 
 
+class SuspendedOrderItemInline(admin.TabularInline):
+    model = SuspendedOrderItem
+    extra = 0
+    readonly_fields = ("product", "units_sold", "stock_quantity", "sale_unit", "unit_price")
+
+
+@admin.register(SuspendedOrder)
+class SuspendedOrderAdmin(admin.ModelAdmin):
+    list_display = ("id", "label", "tenant", "total_amount", "status", "updated_at")
+    list_filter = ("tenant", "status")
+    search_fields = ("label", "browser_key")
+    readonly_fields = ("total_amount", "created_at", "updated_at")
+    inlines = [SuspendedOrderItemInline]
+
+
 @admin.register(Tenant)
 class TenantAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "is_active", "created_at")
+    list_display = ("name", "slug", "is_active", "has_financial_kpi_pin", "created_at")
     list_filter = ("is_active",)
     search_fields = ("name", "slug")
+
+    @admin.display(boolean=True, description="KPI PIN configured")
+    def has_financial_kpi_pin(self, obj):
+        return bool(obj.financial_kpi_pin_hash)
 
 
 @admin.register(TenantMembership)
