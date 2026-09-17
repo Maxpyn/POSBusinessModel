@@ -5,6 +5,7 @@ from django.db.models.deletion import ProtectedError
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.test import override_settings
 
 from .models import Customer, ExistingDebt, Product, ProductPriceHistory, Sale, SaleItem, Tenant, TenantMembership
 
@@ -91,6 +92,24 @@ class PosWorkflowTests(TestCase):
 		self.assertNotIn("potential_revenue", response.context)
 		self.assertNotContains(response, "Potential revenue")
 		self.assertNotContains(response, "Potential Profit")
+
+	@override_settings(FINANCIAL_KPI_PIN="4826")
+	def test_pos_can_unlock_financial_kpis_with_owner_pin(self):
+		self.client.logout()
+		response = self.client.get(reverse("mini_mart:dashboard"))
+		self.assertNotContains(response, "Potential revenue")
+
+		response = self.client.post(
+			reverse("mini_mart:dashboard"),
+			{"financial_kpi_pin": "4826"},
+		)
+		self.assertRedirects(response, reverse("mini_mart:dashboard"))
+		self.assertContains(self.client.get(reverse("mini_mart:dashboard")), "Potential revenue")
+
+	def test_pos_dashboard_does_not_require_login(self):
+		self.client.logout()
+		response = self.client.get(reverse("mini_mart:dashboard"))
+		self.assertEqual(response.status_code, 200)
 
 	def test_product_form_shows_and_saves_alternative_unit_fields(self):
 		form_response = self.client.get(reverse("mini_mart:product_add"))

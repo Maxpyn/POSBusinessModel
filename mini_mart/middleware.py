@@ -1,7 +1,6 @@
-from django.contrib.auth.views import redirect_to_login
 from django.http import HttpResponseForbidden
 
-from .models import TenantMembership, current_tenant
+from .models import TenantMembership, current_tenant, legacy_tenant
 
 
 class TenantContextMiddleware:
@@ -13,7 +12,13 @@ class TenantContextMiddleware:
             return self.get_response(request)
 
         if not request.user.is_authenticated:
-            return redirect_to_login(request.get_full_path(), "/accounts/login/")
+            request.tenant = legacy_tenant()
+            request.tenant_membership = None
+            token = current_tenant.set(request.tenant)
+            try:
+                return self.get_response(request)
+            finally:
+                current_tenant.reset(token)
 
         memberships = TenantMembership.objects.filter(
             user=request.user,

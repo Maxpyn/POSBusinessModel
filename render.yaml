@@ -9,3 +9,5 @@ services:
         value: 'False'
       - key: DJANGO_SECRET_KEY
         generateValue: true
+      - key: FINANCIAL_KPI_PIN
+        sync: false

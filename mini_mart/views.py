@@ -8,12 +8,26 @@ from django.db.models import Sum, F, DecimalField, Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from decimal import Decimal
+from django.conf import settings
 from .forms import ExistingDebtForm, ProductForm, CustomerForm # remove SaleForm, PaymentForm if you don't use them
 from .models import ExistingDebt, Product, Sale, SaleItem, Customer
 
 def dashboard(request):
     today = timezone.now().date()
-    can_view_financials = request.tenant_membership.can_view_financial_kpis
+    if request.method == 'POST' and request.POST.get('financial_kpi_pin'):
+        if settings.FINANCIAL_KPI_PIN and request.POST['financial_kpi_pin'] == settings.FINANCIAL_KPI_PIN:
+            request.session['financial_kpis_unlocked'] = True
+        else:
+            messages.error(request, 'The financial KPI PIN is invalid.')
+        return redirect('mini_mart:dashboard')
+
+    can_view_financials = bool(
+        request.session.get('financial_kpis_unlocked')
+        or (
+            request.tenant_membership
+            and request.tenant_membership.can_view_financial_kpis
+        )
+    )
 
     products_count = Product.objects.count()
     customers_count = Customer.objects.count()
