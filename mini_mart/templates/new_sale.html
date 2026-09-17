@@ -5,22 +5,24 @@
     <div class="page-kicker">Checkout</div>
     <h1 class="fw-bold mb-1">New sale</h1>
     <p class="text-muted mb-0">Find products, build the basket, and collect payment.</p>
-</div>
-
-<div class="row g-4">
-
-    <!-- CART -->
-    <div class="col-12">
-
-        <form method="post">
-
-            {% csrf_token %}
-
-            <div class="card cart-panel">
-
-                <div class="card-header">
-                    <strong><i class="bi bi-basket3 me-2"></i>Current basket</strong>
-                </div>
+            <div class="list-group-item">
+                <strong>{{ p.name }}</strong>
+                <small class="text-muted d-block">Stock: {{ p.quantity }}</small>
+                <button type="button" class="btn btn-sm btn-outline-primary add-to-cart"
+                    data-id="{{ p.id }}" data-name="{{ p.name }}"
+                    data-price="{{ p.selling_price }}" data-unit="{{ p.base_unit }}"
+                    data-payload-unit="base">
+                    ₦{{ p.selling_price }} / {{ p.base_unit }}
+                </button>
+                {% if p.has_alternative_unit %}
+                <button type="button" class="btn btn-sm btn-outline-secondary add-to-cart"
+                    data-id="{{ p.id }}" data-name="{{ p.name }}"
+                    data-price="{{ p.alternative_selling_price }}" data-unit="{{ p.alternative_unit }}"
+                    data-payload-unit="alternative">
+                    ₦{{ p.alternative_selling_price }} / {{ p.alternative_unit }}
+                </button>
+                {% endif %}
+            </div>
 
                 <ul
                     id="cart-list"
@@ -123,20 +125,20 @@ searchBox.addEventListener('keyup', () => {
         data.forEach(p => {
 
             resultsDiv.innerHTML += `
-                <a href="#"
-                   class="list-group-item list-group-item-action add-to-cart"
-                   data-id="${p.id}"
-                   data-name="${p.name}"
-                   data-price="${p.price}"
-                   data-stock="${p.stock}">
-
-                    ${p.name} - ₦${p.price}
-
-                    <small class="text-muted">
-                        Stock: ${p.stock}
-                    </small>
-
-                </a>
+                <div class="list-group-item">
+                    <strong>${p.name}</strong>
+                    <small class="text-muted d-block">Stock: ${p.stock}</small>
+                    <button type="button" class="btn btn-sm btn-outline-primary add-to-cart"
+                        data-id="${p.id}" data-name="${p.name}" data-price="${p.price}"
+                        data-unit="${p.base_unit}" data-payload-unit="base">
+                        ₦${p.price} / ${p.base_unit}
+                    </button>
+                    ${p.alternative_unit ? `<button type="button" class="btn btn-sm btn-outline-secondary add-to-cart"
+                        data-id="${p.id}" data-name="${p.name}" data-price="${p.alternative_price}"
+                        data-unit="${p.alternative_unit}" data-payload-unit="alternative">
+                        ₦${p.alternative_price} / ${p.alternative_unit}
+                    </button>` : ''}
+                </div>
             `;
 
         });
@@ -163,17 +165,22 @@ document.addEventListener('click', function(e) {
     const id = product.dataset.id;
     const name = product.dataset.name;
     const price = parseFloat(product.dataset.price);
+    const unit = product.dataset.unit || 'Unit';
+    const payloadUnit = product.dataset.payloadUnit || 'base';
+    const cartKey = `${id}:${payloadUnit}`;
 
-    if (cart[id]) {
+    if (cart[cartKey]) {
 
-        cart[id].qty += 1;
+        cart[cartKey].qty += 1;
 
     } else {
 
-        cart[id] = {
+        cart[cartKey] = {
             name: name,
             price: price,
-            qty: 1
+            qty: 1,
+            unit: unit,
+            payloadUnit: payloadUnit
         };
 
     }
@@ -202,12 +209,15 @@ function renderCart() {
         cartList.innerHTML += `
             <li class="list-group-item d-flex justify-content-between">
                 <span>
-                    ${item.name} × ${item.qty}
+                    ${item.name} × ${item.qty} ${item.unit}
                 </span>
 
                 <span>
                     ₦${lineTotal.toFixed(2)}
                 </span>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-cart-item" data-cart-key="${id}">
+                    Remove
+                </button>
             </li>
         `;
 
@@ -215,7 +225,7 @@ function renderCart() {
             <input
                 type="hidden"
                 name="cart"
-                value="${id}:${item.qty}"
+                value="${id.split(':')[0]}:${item.qty}:${item.payloadUnit}"
             >
         `;
     }
@@ -223,6 +233,13 @@ function renderCart() {
     cartTotalSpan.textContent = total.toFixed(2);
 
 }
+
+document.addEventListener('click', function(e) {
+    const removeButton = e.target.closest('.remove-cart-item');
+    if (!removeButton) return;
+    delete cart[removeButton.dataset.cartKey];
+    renderCart();
+});
 </script>
 
 {% endblock %}

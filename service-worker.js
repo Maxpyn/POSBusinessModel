@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ceemart-shell-v2';
+const CACHE_NAME = 'pos-platform-shell-v1';
 const APP_SHELL = [
     '/',
     '/offline-sell/',

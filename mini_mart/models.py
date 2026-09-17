@@ -1,11 +1,66 @@
 from decimal import Decimal
+from contextvars import ContextVar
 
 from django.core.exceptions import ValidationError
+from django.conf import settings
 from django.db import models
 from django.db.models.deletion import PROTECT
 
 
+current_tenant = ContextVar("current_tenant", default=None)
+
+
+class Tenant(models.Model):
+    name = models.CharField(max_length=150)
+    slug = models.SlugField(max_length=80, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
+class TenantMembership(models.Model):
+    class Role(models.TextChoices):
+        OWNER = "owner", "Owner"
+        MANAGER = "manager", "Manager"
+        STAFF = "staff", "Staff"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tenant_memberships")
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.STAFF)
+    can_view_financials = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def can_view_financial_kpis(self):
+        return self.role == self.Role.OWNER or self.can_view_financials
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("tenant", "user"), name="unique_tenant_membership"),
+        ]
+
+
+class TenantScopedManager(models.Manager):
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        tenant = current_tenant.get()
+        if tenant is not None:
+            return queryset.filter(tenant=tenant)
+        return queryset
+
+
+def legacy_tenant():
+    tenant, _ = Tenant.objects.get_or_create(
+        slug="legacy",
+        defaults={"name": "Legacy workspace"},
+    )
+    return tenant
+
+
 class Product(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="products", null=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
 
@@ -34,7 +89,10 @@ class Product(models.Model):
     )
 
     date_added = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     is_available = models.BooleanField(default=True)
+
+    objects = TenantScopedManager()
 
     @property
     def profit_per_unit(self):
@@ -85,13 +143,56 @@ class Product(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        previous = None
+        if not is_new and self.pk:
+            previous = type(self)._base_manager.get(pk=self.pk)
+        if self.tenant_id is None:
+            self.tenant = current_tenant.get() or legacy_tenant()
         if self._state.adding and not self.initial_quantity:
             self.initial_quantity = self.quantity
         self.full_clean()
         super().save(*args, **kwargs)
+        price_changed = previous and any(
+            getattr(previous, field) != getattr(self, field)
+            for field in (
+                "cost_price",
+                "selling_price",
+                "alternative_selling_price",
+            )
+        )
+        if is_new or price_changed:
+            ProductPriceHistory.objects.create(
+                product=self,
+                cost_price=self.cost_price,
+                selling_price=self.selling_price,
+                alternative_selling_price=self.alternative_selling_price,
+            )
+
+
+class ProductPriceHistory(models.Model):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="price_history",
+    )
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2)
+    selling_price = models.DecimalField(max_digits=10, decimal_places=2)
+    alternative_selling_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def tenant_id(self):
+        return self.product.tenant_id
 
 
 class Customer(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="customers", null=True)
     name = models.CharField(max_length=100)
     phone_number = models.CharField(max_length=15, blank=True)
     address = models.TextField(blank=True)
@@ -101,6 +202,13 @@ class Customer(models.Model):
         decimal_places=2,
         default=Decimal("0.00"),
     )
+
+    objects = TenantScopedManager()
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            self.tenant = current_tenant.get() or legacy_tenant()
+        super().save(*args, **kwargs)
 
     @property
     def total_debt(self):
@@ -119,6 +227,7 @@ class Customer(models.Model):
 
 
 class ExistingDebt(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="existing_debts", null=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
     description = models.CharField(max_length=200, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -135,6 +244,8 @@ class ExistingDebt(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = TenantScopedManager()
+
     def clean(self):
         if self.amount <= 0:
             raise ValidationError("Debt amount must be greater than zero.")
@@ -142,6 +253,8 @@ class ExistingDebt(models.Model):
             raise ValidationError("Amount paid must be between zero and the debt amount.")
 
     def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            self.tenant = self.customer.tenant or current_tenant.get() or legacy_tenant()
         self.balance = self.amount - self.amount_paid
         super().save(*args, **kwargs)
 
@@ -150,6 +263,7 @@ class ExistingDebt(models.Model):
 
 
 class Sale(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="sales", null=True)
     customer = models.ForeignKey(
         Customer,
     on_delete=models.SET_NULL,
@@ -198,6 +312,8 @@ class Sale(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)  
 
+    objects = TenantScopedManager()
+
     def clean(self):  
         if self.discount_amount > self.total_amount:  
             raise ValidationError(  
@@ -205,6 +321,8 @@ class Sale(models.Model):
             )  
 
     def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            self.tenant = (self.customer.tenant if self.customer_id else None) or current_tenant.get() or legacy_tenant()
         self.final_amount = self.total_amount - self.discount_amount  
         self.profit = self.final_amount - self.cost_amount  
         self.balance = self.final_amount - self.amount_paid  
@@ -220,6 +338,7 @@ class Sale(models.Model):
         return f"Sale #{self.pk}"
 
 class SaleItem(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="sale_items", null=True)
     sale = models.ForeignKey(
         Sale,
         on_delete=models.CASCADE,
@@ -233,10 +352,20 @@ class SaleItem(models.Model):
 
     quantity = models.PositiveIntegerField()  
 
+    units_sold = models.PositiveIntegerField(default=1)
+    sale_unit = models.CharField(max_length=50, default="Unit")
+
     unit_price = models.DecimalField(  
         max_digits=10,  
         decimal_places=2,  
     )  
+
+    objects = TenantScopedManager()
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            self.tenant = self.sale.tenant or current_tenant.get() or legacy_tenant()
+        super().save(*args, **kwargs)
 
     @property  
     def subtotal(self):  

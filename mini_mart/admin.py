@@ -1,6 +1,37 @@
 from django.contrib import admin
 
-from .models import ExistingDebt, Product, Customer, Sale, SaleItem
+from .models import (
+    ExistingDebt,
+    Product,
+    Customer,
+    Sale,
+    SaleItem,
+    ProductPriceHistory,
+    Tenant,
+    TenantMembership,
+)
+
+
+@admin.register(ProductPriceHistory)
+class ProductPriceHistoryAdmin(admin.ModelAdmin):
+    list_display = ("product", "cost_price", "selling_price", "alternative_selling_price", "changed_at")
+    list_filter = ("changed_at",)
+    search_fields = ("product__name",)
+    readonly_fields = ("product", "cost_price", "selling_price", "alternative_selling_price", "changed_at")
+
+
+@admin.register(Tenant)
+class TenantAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "slug")
+
+
+@admin.register(TenantMembership)
+class TenantMembershipAdmin(admin.ModelAdmin):
+    list_display = ("tenant", "user", "role", "can_view_financials", "created_at")
+    list_filter = ("tenant", "role")
+    search_fields = ("tenant__name", "user__username", "user__email")
 
 
 @admin.register(ExistingDebt)

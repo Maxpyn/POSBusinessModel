@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<main class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-12 col-md-6 col-lg-4">
+            <h1 class="mb-4">Sign in</h1>
+            <form method="post">
+                {% csrf_token %}
+                {{ form.as_p }}
+                <input type="hidden" name="next" value="{{ next }}">
+                <button class="btn btn-primary w-100" type="submit">Sign in</button>
+            </form>
+        </div>
+    </div>
+</main>
+{% endblock %}

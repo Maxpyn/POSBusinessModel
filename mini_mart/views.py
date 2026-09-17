@@ -13,58 +13,14 @@ from .models import ExistingDebt, Product, Sale, SaleItem, Customer
 
 def dashboard(request):
     today = timezone.now().date()
+    can_view_financials = request.tenant_membership.can_view_financial_kpis
 
     products_count = Product.objects.count()
     customers_count = Customer.objects.count()
 
-    # =====================================================
-    # WAREHOUSE KPIs (DO NOT CHANGE WHEN SALES ARE MADE)
-    # =====================================================
-
-    # Maximum revenue possible from all stock ever received
-    # =====================================================
-    # CURRENT INVENTORY KPIs
-    # =====================================================
-
-    # Current value of stock at cost price
-    inventory_value = Product.objects.aggregate(
-    total=Sum(
-        F('quantity') * F('cost_price'),
-        output_field=DecimalField()
-    )
-    )['total'] or Decimal('0.00')
-
-    # Revenue possible if all current stock sells
-    potential_revenue = Product.objects.aggregate(
-    total=Sum(
-        F('quantity') * F('selling_price'),
-        output_field=DecimalField()
-    )
-    )['total'] or Decimal('0.00')
-
-    # Profit possible from current stock
-    potential_profit = potential_revenue - inventory_value
-
-    # =====================================================
-    # SALES KPIs (REAL BUSINESS PERFORMANCE)
-    # =====================================================
-
-    sales_summary = Sale.objects.aggregate(
-        actual_revenue=Sum('final_amount'),
-        actual_profit=Sum('profit'),
-        total_discounts=Sum('discount_amount'),
-    )
-
-    actual_revenue = sales_summary['actual_revenue'] or Decimal('0.00')
-    actual_profit = sales_summary['actual_profit'] or Decimal('0.00')
-    total_discounts = sales_summary['total_discounts'] or Decimal('0.00')
-
     # Today's Sales
     today_sales = Sale.objects.filter(created_at__date=today)
     today_sales_count = today_sales.count()
-    today_revenue = today_sales.aggregate(
-        total=Sum('final_amount')
-    )['total'] or Decimal('0.00')
 
     # =====================================================
     # DEBT KPIs
@@ -90,23 +46,43 @@ def dashboard(request):
         "products_count": products_count,
         "customers_count": customers_count,
 
-        # Warehouse KPIs
-        "inventory_value": inventory_value,
-        "potential_revenue": potential_revenue,
-        "potential_profit": potential_profit,
+        "can_view_financials": can_view_financials,
 
-        # Sales KPIs
         "today_sales_count": today_sales_count,
-        "today_revenue": today_revenue,
-        "actual_revenue": actual_revenue,
-        "actual_profit": actual_profit,
-        "total_discounts": total_discounts,
 
         # Debt KPIs
         "total_debt": total_debt,
         "debt_records": debt_records,
         "debtors_count": debtors_count,
     }
+
+    if can_view_financials:
+        inventory_value = Product.objects.aggregate(
+            total=Sum(
+                F('quantity') * F('cost_price'),
+                output_field=DecimalField(),
+            )
+        )['total'] or Decimal('0.00')
+        potential_revenue = Product.objects.aggregate(
+            total=Sum(
+                F('quantity') * F('selling_price'),
+                output_field=DecimalField(),
+            )
+        )['total'] or Decimal('0.00')
+        sales_summary = Sale.objects.aggregate(
+            actual_revenue=Sum('final_amount'),
+            actual_profit=Sum('profit'),
+            total_discounts=Sum('discount_amount'),
+        )
+        context.update({
+            "inventory_value": inventory_value,
+            "potential_revenue": potential_revenue,
+            "potential_profit": potential_revenue - inventory_value,
+            "today_revenue": today_sales.aggregate(total=Sum('final_amount'))['total'] or Decimal('0.00'),
+            "actual_revenue": sales_summary['actual_revenue'] or Decimal('0.00'),
+            "actual_profit": sales_summary['actual_profit'] or Decimal('0.00'),
+            "total_discounts": sales_summary['total_discounts'] or Decimal('0.00'),
+        })
 
     return render(request, "dashboard.html", context)
 
@@ -132,7 +108,11 @@ def new_sale(request):
                 'id': p.id,
                 'name': p.name,
                 'price': float(p.selling_price),
-                'stock': p.quantity
+                'stock': p.quantity,
+                'base_unit': p.base_unit,
+                'alternative_unit': p.alternative_unit if p.has_alternative_unit else None,
+                'alternative_price': float(p.alternative_selling_price) if p.has_alternative_unit else None,
+                'alternative_quantity': p.alternative_unit_quantity if p.has_alternative_unit else None,
             }
             for p in products
         ]
@@ -153,10 +133,13 @@ def new_sale(request):
                 quantities = {}
 
                 for item in cart:
-                    product_id, qty = item.split(':')
+                    parts = item.split(':')
+                    product_id, qty = parts[:2]
+                    unit = parts[2] if len(parts) > 2 else 'base'
                     qty = int(qty)
                     if qty > 0:
-                        quantities[product_id] = quantities.get(product_id, 0) + qty
+                        key = (product_id, unit)
+                        quantities[key] = quantities.get(key, 0) + qty
 
                 if not quantities:
                     raise ValueError('Cart is empty.')
@@ -164,20 +147,31 @@ def new_sale(request):
                 products_by_id = {
                     str(product.id): product
                     for product in Product.objects.select_for_update().filter(
-                        id__in=quantities,
+                        id__in=[product_id for product_id, _ in quantities],
                         is_available=True,
                     )
                 }
                 if len(products_by_id) != len(quantities):
                     raise ValueError('One or more products are no longer available.')
 
-                for product_id, qty in quantities.items():
+                for (product_id, unit), units_sold in quantities.items():
                     product = products_by_id[product_id]
-                    if qty > product.quantity:
+                    if unit == 'alternative':
+                        if not product.has_alternative_unit:
+                            raise ValueError(f'{product.name} has no alternative selling unit.')
+                        stock_quantity = units_sold * product.alternative_unit_quantity
+                        sale_price = product.alternative_selling_price
+                        sale_unit = product.alternative_unit
+                    else:
+                        stock_quantity = units_sold
+                        sale_price = product.selling_price
+                        sale_unit = product.base_unit
+                    if stock_quantity > product.quantity:
                         raise ValueError(f'Not enough stock for {product.name}.')
-                    total_amount += product.selling_price * qty
-                    cost_amount += product.cost_price * qty
-                    items_data.append((product, qty, product.selling_price))
+                    total_amount += sale_price * units_sold
+                    cost_amount += product.cost_price * stock_quantity
+                    base_price = sale_price / product.alternative_unit_quantity if unit == 'alternative' else sale_price
+                    items_data.append((product, stock_quantity, units_sold, base_price, sale_unit))
 
                 sale = Sale.objects.create(
                     customer=None,
@@ -186,14 +180,16 @@ def new_sale(request):
                     amount_paid=Decimal('0.00')
                 )
 
-                for product, qty, price in items_data:
+                for product, stock_quantity, units_sold, base_price, sale_unit in items_data:
                     SaleItem.objects.create(
                         sale=sale,
                         product=product,
-                        quantity=qty,
-                        unit_price=price
+                        quantity=stock_quantity,
+                        units_sold=units_sold,
+                        sale_unit=sale_unit,
+                        unit_price=base_price,
                     )
-                    product.quantity -= qty
+                    product.quantity -= stock_quantity
                     product.save(update_fields=['quantity'])
         except (TypeError, ValueError):
             messages.error(request, 'The cart contains invalid or unavailable items.')
@@ -228,6 +224,10 @@ def offline_pos(request):
             'name': product.name,
             'price': str(product.selling_price),
             'stock': product.quantity,
+            'base_unit': product.base_unit,
+            'alternative_unit': product.alternative_unit if product.has_alternative_unit else None,
+            'alternative_price': str(product.alternative_selling_price) if product.has_alternative_unit else None,
+            'alternative_quantity': product.alternative_unit_quantity if product.has_alternative_unit else None,
         }
         for product in products
     ]
@@ -254,27 +254,41 @@ def sync_offline_sale(request):
             for item in items:
                 product_id = str(item['product_id'])
                 quantity = int(item['quantity'])
+                unit = item.get('unit', 'base')
                 if quantity <= 0:
                     raise ValueError('Invalid quantity.')
-                quantities[product_id] = quantities.get(product_id, 0) + quantity
+                key = (product_id, unit)
+                quantities[key] = quantities.get(key, 0) + quantity
 
             products = {
                 str(product.id): product
                 for product in Product.objects.select_for_update().filter(
-                    id__in=quantities,
+                    id__in=[product_id for product_id, _ in quantities],
                     is_available=True,
                 )
             }
             if len(products) != len(quantities):
                 raise ValueError('A product is no longer available.')
 
-            for product_id, quantity in quantities.items():
+            for (product_id, unit), units_sold in quantities.items():
                 product = products[product_id]
-                if quantity > product.quantity:
+                if unit == 'alternative':
+                    if not product.has_alternative_unit:
+                        raise ValueError(f'{product.name} has no alternative selling unit.')
+                    stock_quantity = units_sold * product.alternative_unit_quantity
+                    sale_price = product.alternative_selling_price
+                    sale_unit = product.alternative_unit
+                    base_price = sale_price / product.alternative_unit_quantity
+                else:
+                    stock_quantity = units_sold
+                    sale_price = product.selling_price
+                    sale_unit = product.base_unit
+                    base_price = sale_price
+                if stock_quantity > product.quantity:
                     raise ValueError(f'Not enough stock for {product.name}.')
-                total_amount += product.selling_price * quantity
-                cost_amount += product.cost_price * quantity
-                sale_items.append((product, quantity, product.selling_price))
+                total_amount += sale_price * units_sold
+                cost_amount += product.cost_price * stock_quantity
+                sale_items.append((product, stock_quantity, units_sold, base_price, sale_unit))
 
             sale = Sale.objects.create(
                 customer=None,
@@ -282,14 +296,16 @@ def sync_offline_sale(request):
                 cost_amount=cost_amount,
                 amount_paid=total_amount,
             )
-            for product, quantity, price in sale_items:
+            for product, stock_quantity, units_sold, base_price, sale_unit in sale_items:
                 SaleItem.objects.create(
                     sale=sale,
                     product=product,
-                    quantity=quantity,
-                    unit_price=price,
+                    quantity=stock_quantity,
+                    units_sold=units_sold,
+                    sale_unit=sale_unit,
+                    unit_price=base_price,
                 )
-                product.quantity -= quantity
+                product.quantity -= stock_quantity
                 product.save(update_fields=['quantity'])
 
         return JsonResponse({'status': 'synced', 'sale_id': sale.id})

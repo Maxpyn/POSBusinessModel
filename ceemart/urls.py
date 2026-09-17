@@ -20,6 +20,7 @@ from pwa.views import service_worker
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/', include('django.contrib.auth.urls')),
     path('service-worker.js', service_worker, name='service-worker-legacy'),
     path('', include('pwa.urls')),
     path('', include('mini_mart.urls')),

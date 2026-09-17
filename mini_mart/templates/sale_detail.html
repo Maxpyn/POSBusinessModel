@@ -56,7 +56,7 @@
         {% for item in sale.items.all %}
             <tr>
                 <td>{{ item.product.name }}</td>
-                <td>{{ item.quantity }}</td>
+                <td>{{ item.units_sold }} {{ item.sale_unit }}</td>
                 <td>₦{{ item.unit_price|intcomma }}</td>
                 <td>₦{{ item.subtotal|intcomma }}</td>
             </tr>

@@ -67,8 +67,8 @@ INSTALLED_APPS = [
 ]
 
 PWA_SERVICE_WORKER_PATH = BASE_DIR / 'service-worker.js'
-PWA_APP_NAME = 'CeeMart POS'
-PWA_APP_DESCRIPTION = 'CeeMart point-of-sale application'
+PWA_APP_NAME = 'Business POS Platform'
+PWA_APP_DESCRIPTION = 'Multi-tenant point-of-sale application'
 PWA_APP_THEME_COLOR = '#050505'
 PWA_APP_BACKGROUND_COLOR = '#050505'
 PWA_APP_DISPLAY = 'standalone'
@@ -90,6 +90,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'mini_mart.middleware.TenantContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ceci-s-mart
+    name: pos-business-model
     runtime: docker
     plan: free
     healthCheckPath: /
@@ -11,9 +11,9 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: ceci-s-mart-db
+          name: pos-business-model-db
           property: connectionString
 
 databases:
-  - name: ceci-s-mart-db
+  - name: pos-business-model-db
     plan: free

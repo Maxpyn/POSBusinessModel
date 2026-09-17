@@ -2,20 +2,95 @@ from decimal import Decimal
 import json
 
 from django.db.models.deletion import ProtectedError
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Customer, ExistingDebt, Product, Sale, SaleItem
+from .models import Customer, ExistingDebt, Product, ProductPriceHistory, Sale, SaleItem, Tenant, TenantMembership
 
 
 class PosWorkflowTests(TestCase):
 	def setUp(self):
+		self.user = get_user_model().objects.create_user(
+			username="platform-owner",
+			password="test-password",
+		)
+		self.tenant = Tenant.objects.get(slug="legacy")
+		TenantMembership.objects.create(
+			tenant=self.tenant,
+			user=self.user,
+			role=TenantMembership.Role.OWNER,
+		)
+		self.client.login(username="platform-owner", password="test-password")
 		self.product = Product.objects.create(
 			name="Rice",
 			quantity=10,
 			cost_price=Decimal("100.00"),
 			selling_price=Decimal("150.00"),
 		)
+
+	def test_alternative_unit_sale_uses_alternative_price_and_base_stock(self):
+		self.product.has_alternative_unit = True
+		self.product.alternative_unit = "Mudu"
+		self.product.alternative_unit_quantity = 18
+		self.product.alternative_selling_price = Decimal("1800.00")
+		self.product.quantity = 36
+		self.product.save()
+
+		response = self.client.post(
+			reverse("mini_mart:new_sale"),
+			{"cart": [f"{self.product.pk}:2:alternative"]},
+		)
+
+		sale = Sale.objects.get()
+		item = sale.items.get()
+		self.assertRedirects(response, reverse("mini_mart:record_payment", args=[sale.pk]))
+		self.assertEqual(sale.total_amount, Decimal("3600.00"))
+		self.assertEqual(item.units_sold, 2)
+		self.assertEqual(item.sale_unit, "Mudu")
+		self.assertEqual(item.quantity, 36)
+		self.assertEqual(Product.objects.get(pk=self.product.pk).quantity, 0)
+
+	def test_product_price_changes_create_a_history_snapshot(self):
+		self.assertEqual(ProductPriceHistory.objects.filter(product=self.product).count(), 1)
+		self.product.selling_price = Decimal("175.00")
+		self.product.save()
+
+		self.assertEqual(ProductPriceHistory.objects.filter(product=self.product).count(), 2)
+		self.assertEqual(
+			ProductPriceHistory.objects.filter(product=self.product).latest("changed_at").selling_price,
+			Decimal("175.00"),
+		)
+
+	def test_new_sale_contains_remove_item_control(self):
+		response = self.client.get(reverse("mini_mart:new_sale"))
+		self.assertContains(response, "remove-cart-item")
+
+	def test_owner_can_view_financial_kpis(self):
+		response = self.client.get(reverse("mini_mart:dashboard"))
+
+		self.assertTrue(response.context["can_view_financials"])
+		self.assertIn("potential_revenue", response.context)
+
+	def test_staff_without_financial_permission_cannot_view_financial_kpis(self):
+		staff = get_user_model().objects.create_user(
+			username="staff-user",
+			password="test-password",
+		)
+		TenantMembership.objects.create(
+			tenant=self.tenant,
+			user=staff,
+			role=TenantMembership.Role.STAFF,
+		)
+		self.client.force_login(staff)
+
+		response = self.client.get(reverse("mini_mart:dashboard"))
+
+		self.assertFalse(response.context["can_view_financials"])
+		self.assertNotIn("inventory_value", response.context)
+		self.assertNotIn("potential_revenue", response.context)
+		self.assertNotContains(response, "Potential revenue")
+		self.assertNotContains(response, "Potential Profit")
 
 	def test_product_form_shows_and_saves_alternative_unit_fields(self):
 		form_response = self.client.get(reverse("mini_mart:product_add"))

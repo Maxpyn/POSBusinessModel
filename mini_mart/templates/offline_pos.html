@@ -35,8 +35,8 @@
 {{ products|json_script:"server-products" }}
 <script>
 const serverProducts = JSON.parse(document.getElementById('server-products').textContent);
-const productKey = 'ceemart-products';
-const queueKey = 'ceemart-offline-sales';
+const productKey = 'pos-platform-products';
+const queueKey = 'pos-platform-offline-sales';
 let products = JSON.parse(localStorage.getItem(productKey) || 'null') || serverProducts;
 let cart = {};
 
@@ -56,10 +56,15 @@ function renderProducts() {
     const query = search.value.trim().toLowerCase();
     const matches = products.filter(product => product.name.toLowerCase().includes(query));
     productList.innerHTML = matches.map(product => `
-        <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-product-id="${product.id}">
+        <div class="list-group-item">
             <span>${escapeHtml(product.name)}<small class="d-block text-muted">Stock: ${product.stock}</small></span>
-            <strong>N${Number(product.price).toFixed(2)}</strong>
-        </button>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-product-id="${product.id}" data-unit="base">
+                N${Number(product.price).toFixed(2)} / ${escapeHtml(product.base_unit)}
+            </button>
+            ${product.alternative_unit ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-product-id="${product.id}" data-unit="alternative">
+                N${Number(product.alternative_price).toFixed(2)} / ${escapeHtml(product.alternative_unit)}
+            </button>` : ''}
+        </div>
     `).join('') || '<div class="text-muted p-3">No matching products in the saved catalog.</div>';
 }
 
@@ -68,7 +73,7 @@ function renderCart() {
     cartList.innerHTML = Object.values(cart).map(item => {
         const lineTotal = Number(item.price) * item.quantity;
         amount += lineTotal;
-        return `<li class="list-group-item d-flex justify-content-between"><span>${escapeHtml(item.name)} x ${item.quantity}</span><strong>N${lineTotal.toFixed(2)}</strong></li>`;
+        return `<li class="list-group-item d-flex justify-content-between"><span>${escapeHtml(item.name)} x ${item.quantity} ${escapeHtml(item.unitName)}</span><strong>N${lineTotal.toFixed(2)}</strong><button type="button" class="btn btn-sm btn-outline-danger remove-offline-item" data-cart-key="${item.cartKey}">Remove</button></li>`;
     }).join('') || '<li class="list-group-item text-muted">Basket is empty.</li>';
     total.textContent = amount.toFixed(2);
 }
@@ -113,18 +118,23 @@ productList.addEventListener('click', event => {
     if (!button) return;
     const product = products.find(item => String(item.id) === button.dataset.productId);
     if (!product) return;
-    const current = cart[product.id] || {...product, quantity: 0};
-    if (current.quantity >= product.stock) {
+    const unit = button.dataset.unit || 'base';
+    const multiplier = unit === 'alternative' ? product.alternative_quantity : 1;
+    const unitName = unit === 'alternative' ? product.alternative_unit : product.base_unit;
+    const price = unit === 'alternative' ? product.alternative_price : product.price;
+    const cartKey = `${product.id}:${unit}`;
+    const current = cart[cartKey] || {name: product.name, price, quantity: 0, unitName, productId: product.id, unit, cartKey};
+    if ((current.quantity + 1) * multiplier > product.stock) {
         message.textContent = 'That is more than the saved stock level.';
         return;
     }
     current.quantity += 1;
-    cart[product.id] = current;
+    cart[cartKey] = current;
     renderCart();
 });
 
 document.getElementById('complete-sale').addEventListener('click', async () => {
-    const items = Object.values(cart).map(item => ({product_id: item.id, quantity: item.quantity}));
+    const items = Object.values(cart).map(item => ({product_id: item.productId, quantity: item.quantity, unit: item.unit}));
     if (!items.length) {
         message.textContent = 'Add a product first.';
         return;
@@ -152,7 +162,7 @@ document.getElementById('complete-sale').addEventListener('click', async () => {
     }
     for (const item of items) {
         const product = products.find(product => product.id === item.product_id);
-        if (product) product.stock -= item.quantity;
+        if (product) product.stock -= item.quantity * (item.unit === 'alternative' ? product.alternative_quantity : 1);
     }
     localStorage.setItem(productKey, JSON.stringify(products));
     cart = {};
@@ -169,5 +179,12 @@ renderProducts();
 renderCart();
 renderQueueCount();
 setConnectionStatus();
+
+document.addEventListener('click', event => {
+    const button = event.target.closest('.remove-offline-item');
+    if (!button) return;
+    delete cart[button.dataset.cartKey];
+    renderCart();
+});
 </script>
 {% endblock %}

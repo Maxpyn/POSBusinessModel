@@ -5,8 +5,8 @@
 
 <div class="mb-4">
     <div class="page-kicker">Overview</div>
-    <h1 class="fw-bold mb-1">Welcome, miss Ceci.</h1>
-    <p class="text-muted mb-0">Here is the pulse of your store today.</p>
+    <h1 class="fw-bold mb-1">Business overview</h1>
+    <p class="text-muted mb-0">Here is the pulse of your workspace today.</p>
 </div>
 
 <div class="row g-3">
@@ -27,20 +27,21 @@
         </div>
     </div>
 
-    <!-- KPI 2: Today Revenue -->
+    <!-- KPI 2: Today Sales -->
     <div class="col-6">
         <div class="card kpi-green p-3 text-center">
             <div class="page-kicker text-white opacity-75">Today</div>
             <h6 class="mb-0 opacity-75">Sales</h6>
             <h4 class="mb-0 fw-bold">{{ today_sales_count }}</h4>
-            <small>₦{{ today_revenue|intcomma }}</small>
+            {% if can_view_financials %}<small>₦{{ today_revenue|intcomma }}</small>{% endif %}
             <a href="{% url 'mini_mart:sales_list' %}" class="btn btn-sm btn-outline-primary mt-2">
                 <i class="bi bi-arrow-up-right"></i> Sales history
             </a>
         </div>
     </div>
 
-    <!-- KPI 3: Potential Revenue -->
+    {% if can_view_financials %}
+    <!-- Financial KPIs are restricted to owners or explicitly permitted staff. -->
     <div class="col-6">
         <div class="card p-3 text-center">
             <div class="page-kicker">Inventory upside</div>
@@ -48,7 +49,6 @@
             <h4 class="mb-0 fw-bold">₦{{ potential_revenue|intcomma }}</h4>
         </div>
     </div>
-
     <!-- KPI 3: Potential Profit -->
     <div class="col-6">
         <div class="card p-3 text-center">
@@ -63,6 +63,7 @@
             <h4 class="mb-0 fw-bold">{{ total_discounts|intcomma }}</h4>
         </div>
     </div>
+    {% endif %}
 
     <div class="col-6">
         <div class="card p-3 text-center">
