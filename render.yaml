@@ -9,11 +9,3 @@ services:
         value: 'False'
       - key: DJANGO_SECRET_KEY
         generateValue: true
-      - key: DATABASE_URL
-        fromDatabase:
-          name: pos-business-model-db
-          property: connectionString
-
-databases:
-  - name: pos-business-model-db
-    plan: free
