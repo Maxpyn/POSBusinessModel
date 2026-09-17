@@ -125,6 +125,8 @@ def dashboard(request):
         elif not tenant.financial_kpi_pin_hash and settings.FINANCIAL_KPI_PIN and submitted_pin == settings.FINANCIAL_KPI_PIN:
             tenant.set_financial_kpi_pin(submitted_pin)
             request.session['financial_kpis_unlocked_tenant_id'] = tenant.pk
+        elif not tenant.financial_kpi_pin_hash and not settings.FINANCIAL_KPI_PIN:
+            messages.error(request, 'Financial KPI access has not been configured for this workspace.')
         else:
             messages.error(request, 'The financial KPI PIN is invalid.')
         return redirect('mini_mart:dashboard')

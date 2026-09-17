@@ -126,6 +126,16 @@ class PosWorkflowTests(TestCase):
 		self.assertTrue(response.context["can_view_financials"])
 		self.assertIn("potential_revenue", response.context)
 
+	def test_kpi_unlock_explains_when_bootstrap_pin_is_missing(self):
+		self.client.logout()
+		response = self.client.post(
+			reverse("mini_mart:dashboard"),
+			{"financial_kpi_pin": "4826"},
+		)
+		self.assertEqual(response.status_code, 302)
+		follow_up = self.client.get(reverse("mini_mart:dashboard"))
+		self.assertContains(follow_up, "Financial KPI access has not been configured")
+
 	def test_staff_without_financial_permission_cannot_view_financial_kpis(self):
 		staff = get_user_model().objects.create_user(
 			username="staff-user",

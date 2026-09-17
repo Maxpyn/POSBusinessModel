@@ -98,6 +98,8 @@ const cartTotalSpan = document.getElementById('cart-total');
 const cartInputs = document.getElementById('cart-inputs');
 const suspendedOrderId = document.getElementById('suspended-order-id');
 const holdLabel = document.getElementById('hold-label');
+const resumeOrderUrlTemplate = '{% url "mini_mart:resume_order" 0 %}';
+const discardOrderUrlTemplate = '{% url "mini_mart:discard_order" 0 %}';
 
 let cart = {};
 
@@ -243,16 +245,21 @@ document.addEventListener('click', function(e) {
 
 document.getElementById('hold-order').addEventListener('click', async () => {
     if (!Object.keys(cart).length) return;
-    const response = await fetch('{% url "mini_mart:hold_order" %}', {
-        method: 'POST',
-        headers: {'X-CSRFToken': csrfToken(), 'Content-Type': 'application/x-www-form-urlencoded'},
-        body: (() => {
-            const body = new URLSearchParams({label: holdLabel.value});
-            cartPayload().forEach(line => body.append('cart', line));
-            return body;
-        })()
-    });
-    if (response.ok) window.location.reload();
+    try {
+        const response = await fetch('{% url "mini_mart:hold_order" %}', {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrfToken(), 'Content-Type': 'application/x-www-form-urlencoded'},
+            body: (() => {
+                const body = new URLSearchParams({label: holdLabel.value});
+                cartPayload().forEach(line => body.append('cart', line));
+                return body;
+            })()
+        });
+        if (response.ok) window.location.reload();
+        else alert('This order could not be held. Please try again.');
+    } catch (error) {
+        alert('The order could not be held because the connection failed.');
+    }
 });
 
 document.getElementById('new-order').addEventListener('click', () => {
@@ -265,8 +272,12 @@ document.getElementById('new-order').addEventListener('click', () => {
 document.addEventListener('click', async event => {
     const resumeButton = event.target.closest('.resume-order');
     if (resumeButton) {
-        const response = await fetch(`/sell/held/${resumeButton.dataset.orderId}/`);
-        if (!response.ok) return;
+        const resumeUrl = resumeOrderUrlTemplate.replace('/0/', `/${resumeButton.dataset.orderId}/`);
+        const response = await fetch(resumeUrl);
+        if (!response.ok) {
+            alert('This held order is no longer available in this browser.');
+            return;
+        }
         const order = await response.json();
         cart = {};
         order.items.forEach(item => {
@@ -286,7 +297,8 @@ document.addEventListener('click', async event => {
 
     const discardButton = event.target.closest('.discard-order');
     if (discardButton) {
-        const response = await fetch(`/sell/held/${discardButton.dataset.orderId}/discard/`, {
+        const discardUrl = discardOrderUrlTemplate.replace('/0/', `/${discardButton.dataset.orderId}/discard/`);
+        const response = await fetch(discardUrl, {
             method: 'POST',
             headers: {'X-CSRFToken': csrfToken()},
         });
