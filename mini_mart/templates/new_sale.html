@@ -5,48 +5,23 @@
     <div class="page-kicker">Checkout</div>
     <h1 class="fw-bold mb-1">New sale</h1>
     <p class="text-muted mb-0">Find products, build the basket, and collect payment.</p>
-            <div class="list-group-item">
-                <strong>{{ p.name }}</strong>
-                <small class="text-muted d-block">Stock: {{ p.quantity }}</small>
-                <button type="button" class="btn btn-sm btn-outline-primary add-to-cart"
-                    data-id="{{ p.id }}" data-name="{{ p.name }}"
-                    data-price="{{ p.selling_price }}" data-unit="{{ p.base_unit }}"
-                    data-payload-unit="base">
-                    ₦{{ p.selling_price }} / {{ p.base_unit }}
-                </button>
-                {% if p.has_alternative_unit %}
-                <button type="button" class="btn btn-sm btn-outline-secondary add-to-cart"
-                    data-id="{{ p.id }}" data-name="{{ p.name }}"
-                    data-price="{{ p.alternative_selling_price }}" data-unit="{{ p.alternative_unit }}"
-                    data-payload-unit="alternative">
-                    ₦{{ p.alternative_selling_price }} / {{ p.alternative_unit }}
-                </button>
-                {% endif %}
-            <div class="list-group-item">
-                <strong>{{ p.name }}</strong>
-                <small class="text-muted d-block">Stock: {{ p.quantity }}</small>
-                {% for unit in p.sale_units %}
-                <button type="button" class="btn btn-sm {% if forloop.first %}btn-outline-primary{% else %}btn-outline-secondary{% endif %} add-to-cart"
-                    data-id="{{ p.id }}" data-name="{{ p.name }}" data-price="{{ unit.selling_price }}"
-                    data-unit="{{ unit.name }}" data-payload-unit="{{ unit.code }}">
-                    ₦{{ unit.selling_price }} / {{ unit.name }}
-                </button>
-                {% endfor %}
-            </div>
+</div>
 
-                    <button
-                        type="submit"
-                        class="btn btn-success w-100 mt-2"
-                    >
-                        <i class="bi bi-arrow-right-circle me-1"></i> Continue to payment
-                    </button>
-
+<div class="row g-4">
+    <div class="col-12">
+        <form method="post">
+            {% csrf_token %}
+            <div class="card cart-panel">
+                <div class="card-header"><strong><i class="bi bi-basket3 me-2"></i>Current basket</strong></div>
+                <ul id="cart-list" class="list-group list-group-flush"></ul>
+                <div class="card-body">
+                    <div class="page-kicker">Amount due</div>
+                    <h3 class="fw-bold mb-3">₦<span id="cart-total">0.00</span></h3>
+                    <div id="cart-inputs"></div>
+                    <button type="submit" class="btn btn-success w-100 mt-2"><i class="bi bi-arrow-right-circle me-1"></i> Continue to payment</button>
                 </div>
-
             </div>
-
         </form>
-
     </div>
 
 
@@ -68,23 +43,17 @@
         <div id="product-results" class="list-group">
 
             {% for p in products %}
-
-            <a
-                href="#"
-                class="list-group-item list-group-item-action add-to-cart"
-                data-id="{{ p.id }}"
-                data-name="{{ p.name }}"
-                data-price="{{ p.selling_price }}"
-                data-stock="{{ p.quantity }}"
-            >
-                {{ p.name }} -
-                ₦{{ p.selling_price }}
-
-                <small class="text-muted">
-                    Stock: {{ p.quantity }}
-                </small>
-            </a>
-
+            <div class="list-group-item">
+                <strong>{{ p.name }}</strong>
+                <small class="text-muted d-block">Stock: {{ p.quantity }}</small>
+                {% for unit in p.sale_units %}
+                <button type="button" class="btn btn-sm {% if forloop.first %}btn-outline-primary{% else %}btn-outline-secondary{% endif %} add-to-cart"
+                    data-id="{{ p.id }}" data-name="{{ p.name }}" data-price="{{ unit.selling_price }}"
+                    data-unit="{{ unit.name }}" data-payload-unit="{{ unit.code }}">
+                    ₦{{ unit.selling_price }} / {{ unit.name }}
+                </button>
+                {% endfor %}
+            </div>
             {% endfor %}
 
         </div>
